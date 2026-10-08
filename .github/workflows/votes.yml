@@ -1,0 +1,39 @@
+﻿# Monkey Battles like count, for the game's like goals.
+# Roblox game servers cannot call roblox.com, so this job reads the PUBLIC votes API every 15 minutes and saves the
+# response as votes.json in this repo; game servers read it from raw.githubusercontent.com. No keys or secrets.
+name: votes
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: votes
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch votes
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS --retry 3 --max-time 20 "https://games.roblox.com/v1/games/votes?universeIds=10768213280")
+          up=$(echo "$body" | jq -r '.data[0].upVotes // empty')
+          if ! [[ "$up" =~ ^[0-9]+$ ]]; then echo "::error::votes API returned no upVotes"; exit 1; fi
+          echo "$body" | jq -c '.' > votes.json
+          echo "upVotes=$up"
+      - name: Commit when changed
+        run: |
+          if git diff --quiet -- votes.json; then echo "unchanged"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add votes.json
+          git commit -q -m "votes: $(jq -r '.data[0].upVotes' votes.json) likes"
+          git push -q
